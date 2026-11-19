@@ -12,6 +12,7 @@ from typing import Any
 
 from stadiacast import __version__
 from stadiacast.config import AUDIO_APPLICATIONS, MIC_MODES, PRESETS, Config
+from stadiacast.dnsredirect import FALLBACK_DNS_PORT
 from stadiacast.errors import SetupError
 from stadiacast.game_session import GAME_FRAMINGS, GAME_KEY_MAX, HAPTICS_WATCHDOG_S
 from stadiacast.helpers import HELPER_FLAG, run_helper
@@ -24,6 +25,10 @@ DEFAULT_KEY = "certs/privkey.pem"
 
 
 DOCS = "https://github.com/jkfran/stadiacast/blob/main/docs"
+
+#: The first argument that makes the ``stadiacast`` command show or set up the DNS redirect of a
+#: Mac (:mod:`stadiacast.dnsredirect`) instead of running the receiver.
+DNS_REDIRECT_COMMAND = "dns-redirect"
 
 
 def _csv(value: str) -> tuple[str, ...]:
@@ -38,6 +43,18 @@ def _ports(value: str) -> tuple[int, ...]:
     if any(not 0 <= p <= 65535 for p in ports):
         raise argparse.ArgumentTypeError(f"{value!r} has a port outside 0 to 65535")
     return ports
+
+
+def _dns_port(value: str) -> int:
+    if value == "auto":
+        return 0
+    try:
+        port = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is neither auto nor a port number") from None
+    if not 0 < port <= 65535:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a port from 1 to 65535")
+    return port
 
 
 def _wire_id(value: str) -> int:
@@ -73,7 +90,9 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
         epilog=(
             "Start with --preset live for the flag set proven against the real controller; explicit flags\n"
             "override it.  The setup guide covers the network and the certificate, the protocol notes what\n"
-            f"is behind every knob:\n  {DOCS}/setup.md\n  {DOCS}/protocol.md"
+            f"is behind every knob:\n  {DOCS}/setup.md\n  {DOCS}/protocol.md\n\n"
+            "Other commands, each with its own --help:\n"
+            "  stadiacast dns-redirect   macOS: send the controller's DNS to a sink that could not have port 53"
         ),
     )
     ap.add_argument(
@@ -153,10 +172,12 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
     )
     g.add_argument(
         "--dns-port",
-        type=int,
-        default=53,
-        help="port the spawned DNS sink listens on (default 53, the one the controller asks: another port takes "
-        "a redirect on the way, as a firewall rule makes one)",
+        type=_dns_port,
+        default=0,
+        metavar="auto|PORT",
+        help="port the spawned DNS sink listens on. auto (default): 53, the one the controller asks, or on a "
+        f"Mac whose port 53 a system service holds, {FALLBACK_DNS_PORT}, which takes the redirect that "
+        "'stadiacast dns-redirect' shows and sets up",
     )
     g.add_argument(
         "--sntp",
@@ -599,6 +620,7 @@ async def amain(cfg: Config) -> int:
             f"\nstadiacast {__version__} ready: https :{receiver.http.https_port}  http {receiver.http.http_ports}  "
             f"udp {cfg.advertise_ip}:{cfg.udp_port}/{cfg.game_udp_port} (+2 per controller)  logs {cfg.log_dir}\n"
             + microphone_notice(cfg, heard_as, note)
+            + "".join(f"\n{notice}\n\n" for notice in receiver.notices)
             + "wake the controller(s) now; Ctrl-C to stop.\n",
             flush=True,
         )
@@ -622,6 +644,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args[:1] == [HELPER_FLAG]:  # the frozen executable re-launched as one of its helpers
         return run_helper(args[1:])
+    if args[:1] == [DNS_REDIRECT_COMMAND]:
+        from stadiacast import dnsredirect
+
+        return dnsredirect.main(args[1:])
     try:
         return asyncio.run(amain(parse_args(args)))
     except KeyboardInterrupt:

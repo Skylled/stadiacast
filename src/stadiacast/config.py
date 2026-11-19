@@ -49,7 +49,9 @@ class Config:
     # -- helper processes ------------------------------------------------------------------
     dns_upstream: str | None = None  # spawn the DNS sink forwarding to this resolver
     dns_redirect: tuple[str, ...] = ("time.google.com",)  # extra names the DNS sink points at us
-    dns_port: int = 53  # the port the spawned DNS sink listens on (the controller asks 53)
+    # The port the spawned DNS sink listens on. 0 chooses: 53, the one the controller asks, or on a
+    # Mac whose port 53 a system service holds, 5300 behind the redirect of `stadiacast dns-redirect`.
+    dns_port: int = 0
     sntp: bool = False  # spawn the SNTP server on UDP 123
 
     # -- boot-time endpoints ---------------------------------------------------------------
