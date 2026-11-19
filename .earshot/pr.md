@@ -1,4 +1,3 @@
-Draft: true
 Title: QL-803 slice 2: macOS port 53 held by mDNSResponder: the sink moves, says so, and dns-redirect sets up pf
 
 This pull request was written by an AI agent (Claude Code, briefed by Ace for Kyle, QL-803). It
