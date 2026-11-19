@@ -70,7 +70,7 @@ Ports used by the receiver:
 
 | port | protocol | purpose |
 |---|---|---|
-| 53 TCP/UDP | DNS | the DNS sink (`--dns-upstream` spawns it) |
+| 53 TCP/UDP | DNS | the DNS sink (`--dns-upstream` spawns it; `--dns-port` moves it) |
 | 123 UDP | SNTP | time for the controller (`--sntp`, on in the `live` preset) |
 | 443 TCP | HTTPS | the Google endpoints the DNS sink redirects |
 | 80, 8008 TCP | HTTP | the local control endpoints `/_status`, `/_input`, `/_events`, `/_rumble`, `/_start_game`, `/_audio`, `/_mic`, `/_shutdown` |
@@ -152,7 +152,8 @@ The run directory contains:
 | `dns.jsonl`, `sntp.jsonl` | the helper processes' logs |
 | `<IFACE>.pcap` | the packet capture (macOS), when enabled |
 
-`GET http://<receiver>/_status` returns the live state as JSON: per controller its session,
+`GET http://<receiver>/_status` returns the live state as JSON: under `helpers` where the DNS
+sink and the SNTP server listen and whether each still runs, and per controller its session,
 battery level, headset, headset stream (`playback`) and `microphone`, with `--mic-device` the
 device that carries the microphones under `mic_device`, and with `--gamepad` every virtual pad
 under `gamepads`, with its XInput `slot` or the `error` it ended in; a macOS pad has no slot

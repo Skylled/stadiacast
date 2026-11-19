@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `--dns-port` sets the port the DNS sink of `--dns-upstream` listens on, for a computer whose
+  port 53 belongs to another program and whose firewall can send the controller's queries on.
+- `/_status` lists the helper processes under `helpers`: where each listens and whether it
+  still runs.
+
+### Fixed
+- The DNS sink and the SNTP server listen on the address of `--bind`. They listened on every
+  address of the computer whatever the receiver was told.
+- On macOS, a helper refused a port below 1024 on one address says that macOS gives such a
+  port to a program that is not root on all addresses only.
+
 ## [1.3.0] - 2026-11-18
 
 The controller's microphone on the computer: a microphone that a voice chat or any other

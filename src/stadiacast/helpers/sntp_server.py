@@ -73,7 +73,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         s.bind((a.listen, a.port))
     except OSError as e:
-        hint = bind_hint(a.port, "UDP", e)
+        hint = bind_hint(a.port, "UDP", e, a.listen)
         log("bind_failed", listen=f"{a.listen}:{a.port}", error=hint)
         log.close()
         return 1

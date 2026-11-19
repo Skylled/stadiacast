@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from stadiacast import netutil
 from stadiacast import receiver as receiver_module
 from stadiacast.helpers import DNS_SINK, SNTP_SERVER, helper_command
 from tests.helpers import make_receiver, wait_for
@@ -55,6 +56,76 @@ def test_a_helper_stopped_with_the_receiver_is_not_reported(tmp_path, monkeypatc
         assert rx.log.counts.get("helper_exited", 0) == 0
 
     asyncio.run(run())
+
+
+def test_the_helpers_listen_where_the_receiver_is_told_to(tmp_path, monkeypatch) -> None:
+    """``--bind`` is the helpers' address too, and ``--dns-port`` the sink's port: a receiver kept
+    to one address had its helpers on every one."""
+    spawned: dict[str, list[str]] = {}
+
+    def record(name: str, args: list[str]) -> list[str]:
+        spawned[name] = list(args)
+        return [sys.executable, "-c", "import time; time.sleep(60)"]
+
+    monkeypatch.setattr(receiver_module, "helper_command", record)
+
+    async def run() -> None:
+        rx = make_receiver(tmp_path, sntp=True, dns_upstream="192.0.2.1", dns_port=5300)
+        await rx.start()
+        try:
+            status = rx.status()["helpers"]
+        finally:
+            await rx.stop()
+        dns, sntp = spawned[DNS_SINK], spawned[SNTP_SERVER]
+        assert dns[dns.index("--listen") + 1] == "127.0.0.1" and dns[dns.index("--port") + 1] == "5300"
+        assert sntp[sntp.index("--listen") + 1] == "127.0.0.1"
+        started = next(r for r in rx.log.records if r["event"] == "dns_sink_started")
+        assert started["listen"] == "127.0.0.1:5300"
+        assert status[DNS_SINK]["listen"] == "127.0.0.1:5300" and status[DNS_SINK]["running"] is True
+        assert status[SNTP_SERVER]["listen"] == "127.0.0.1:123"
+        assert rx.status()["helpers"][DNS_SINK]["running"] is False  # stopped with the receiver
+
+    asyncio.run(run())
+
+
+def test_the_spawned_sink_answers_on_the_address_and_port_it_was_given(tmp_path) -> None:
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    name = b"\x0ccloudcast-pa\x0agoogleapis\x03com\x00"
+    question = b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" + name + b"\x00\x01\x00\x01"
+
+    async def run() -> None:
+        rx = make_receiver(tmp_path, dns_upstream="192.0.2.1", dns_port=port)
+        await rx.start()
+        client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        client.settimeout(0.2)
+        try:
+            answer = b""
+            for _ in range(150):  # until the helper process is up
+                client.sendto(question, ("127.0.0.1", port))
+                try:
+                    answer, _ = await asyncio.to_thread(client.recvfrom, 512)
+                    break
+                except (TimeoutError, ConnectionError):
+                    await asyncio.sleep(0.05)
+        finally:
+            client.close()
+            await rx.stop()
+        assert answer[:2] == b"\x12\x34" and answer.endswith(bytes([127, 0, 0, 1]))  # the receiver's address
+
+    asyncio.run(run())
+
+
+def test_a_low_port_on_one_address_of_a_mac_says_what_macos_allows(monkeypatch) -> None:
+    refused = PermissionError(13, "Permission denied")
+    monkeypatch.setattr(sys, "platform", "darwin")
+    hint = netutil.bind_hint(53, "DNS", refused, "192.168.2.1")
+    assert "on all addresses only" in hint and "--bind 0.0.0.0" in hint
+    assert "needs root or CAP_NET_BIND_SERVICE" in netutil.bind_hint(53, "DNS", refused, "0.0.0.0")
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert "needs root or CAP_NET_BIND_SERVICE" in netutil.bind_hint(53, "DNS", refused, "192.168.2.1")
 
 
 @pytest.mark.parametrize("name", [SNTP_SERVER, DNS_SINK])
