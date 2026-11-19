@@ -304,7 +304,9 @@ class Receiver:
     async def _start_dns(self) -> None:
         assert self.cfg.log_dir is not None and self.cfg.dns_upstream is not None and self.cfg.advertise_ip is not None
         patterns = ["*.googleapis.com", "googleapis.com", *self.cfg.dns_redirect]
+        listen = f"{self.cfg.bind}:{self.cfg.dns_port}"
         args = [
+            "--listen", self.cfg.bind, "--port", str(self.cfg.dns_port),
             "--upstream", self.cfg.dns_upstream, "--redirect-ip", self.cfg.advertise_ip,
             "--controller-ip", self.cfg.controller_ip, "--log", os.path.join(self.cfg.log_dir, "dns.jsonl"),
         ]  # fmt: skip
@@ -320,6 +322,7 @@ class Receiver:
         self.log(
             "dns_sink_started",
             pid=self._dns_proc.pid,
+            listen=listen,
             upstream=self.cfg.dns_upstream,
             redirect_ip=self.cfg.advertise_ip,
             redirect=patterns,
@@ -330,9 +333,12 @@ class Receiver:
         """The firmware's lwIP SNTP client asks time.google.com; the signed RPC headers need a wall
         clock, so answer SNTP ourselves (the DNS sink points the name at us)."""
         assert self.cfg.log_dir is not None
-        args = ["--controller-ip", self.cfg.controller_ip, "--log", os.path.join(self.cfg.log_dir, "sntp.jsonl")]
+        args = [
+            "--listen", self.cfg.bind,
+            "--controller-ip", self.cfg.controller_ip, "--log", os.path.join(self.cfg.log_dir, "sntp.jsonl"),
+        ]  # fmt: skip
         self._sntp_proc = await self._spawn_helper(SNTP_SERVER, args, "sntp.out")
-        self.log("sntp_server_started", pid=self._sntp_proc.pid, port=123)
+        self.log("sntp_server_started", pid=self._sntp_proc.pid, listen=f"{self.cfg.bind}:123", port=123)
 
     # ---- the controller registry ---------------------------------------------------------
     def find(self, name: str) -> ControllerSession | None:
@@ -1039,12 +1045,30 @@ class Receiver:
             }
         return {"version": __version__, "gamepad": self.cfg.gamepad, "controllers": controllers}
 
+    def helpers_status(self) -> dict[str, Any]:
+        """The helper processes for ``/_status``: where each one listens and whether it still
+        runs. A helper that is not asked for is absent; one that exited keeps its exit status."""
+        helpers: dict[str, Any] = {}
+        for name, proc, port in (
+            (DNS_SINK, self._dns_proc, self.cfg.dns_port),
+            (SNTP_SERVER, self._sntp_proc, 123),
+        ):
+            if proc is not None:
+                helpers[name] = {
+                    "listen": f"{self.cfg.bind}:{port}",
+                    "pid": proc.pid,
+                    "running": proc.returncode is None,
+                    "returncode": proc.returncode,
+                }
+        return helpers
+
     def status(self) -> dict[str, Any]:
         """The ``/_status`` document."""
         return {
             "version": __version__,
             "controllers": {ctl.label: ctl.status() for ctl in self.controllers.values()},
             "advertise_ip": self.cfg.advertise_ip,
+            "helpers": self.helpers_status(),
             "gamepads": self.gamepads.status() if self.gamepads is not None else None,
             "mic_device": self.mic_device.state() if self.mic_device is not None else None,
             "event_counts": self.log.counts,

@@ -224,7 +224,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         udp = _UdpServer((args.listen, args.port), _UdpHandler)
         tcp = _TcpServer((args.listen, args.port), _TcpHandler)
     except OSError as e:
-        hint = bind_hint(args.port, "DNS", e)
+        hint = bind_hint(args.port, "DNS", e, args.listen)
         log("bind_failed", listen=f"{args.listen}:{args.port}", error=hint)
         log.close()
         return 1

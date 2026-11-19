@@ -33,6 +33,7 @@ def test_preset_live_is_the_proven_configuration_and_flags_override_it():
     cfg = parse_args(["--preset", "live", "--clearcut-block", "off", "--gmsg-hold", "5", "--no-sntp"])
     assert cfg.clearcut_block == "off" and cfg.gmsg_hold == 5.0 and cfg.sntp is False
     cfg = parse_args([])
+    assert cfg.dns_port == 53 and parse_args(["--dns-port", "5300"]).dns_port == 5300
     assert cfg.preset is None and cfg.clearcut_block == "off" and cfg.gmsg_hold == 0.0
     assert (cfg.cert, cfg.key, cfg.cert_given) == (DEFAULT_CERT, DEFAULT_KEY, False)
     assert parse_args(["--cert", "x.pem"]).cert_given is True

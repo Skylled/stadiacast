@@ -111,7 +111,11 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
     )
 
     g = ap.add_argument_group("listeners")
-    g.add_argument("--bind", default="0.0.0.0", help="address the listeners and UDP sockets bind (default: all)")
+    g.add_argument(
+        "--bind",
+        default="0.0.0.0",
+        help="address the listeners, the UDP sockets and the helper processes bind (default: all)",
+    )
     g.add_argument("--https-port", type=int, default=443, help="the controller connects to 443 only (default)")
     g.add_argument(
         "--http-ports",
@@ -146,6 +150,13 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
         "--dns-redirect",
         default="time.google.com",
         help="extra comma separated names the spawned DNS sink answers with our IP ('' for none)",
+    )
+    g.add_argument(
+        "--dns-port",
+        type=int,
+        default=53,
+        help="port the spawned DNS sink listens on (default 53, the one the controller asks: another port takes "
+        "a redirect on the way, as a firewall rule makes one)",
     )
     g.add_argument(
         "--sntp",
@@ -487,6 +498,7 @@ def parse_args(argv: Sequence[str] | None = None) -> Config:
         idle_timeout=a.idle_timeout,
         dns_upstream=a.dns_upstream,
         dns_redirect=_csv(a.dns_redirect),
+        dns_port=a.dns_port,
         sntp=a.sntp,
         stadiaconfig=a.stadiaconfig,
         clearcut_block=a.clearcut_block,

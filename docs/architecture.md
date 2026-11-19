@@ -15,8 +15,8 @@ that has no interpreter to run `-m` with, the executable itself with `--helper <
 | process | module | why separate |
 |---|---|---|
 | the receiver | `stadiacast.cli` → `stadiacast.receiver` | HTTPS/HTTP listeners, every controller's UDP sockets, the event log |
-| DNS sink | `stadiacast.helpers.dns_sink` (wire format: `helpers.dnswire`) | binds port 53; answers `*.googleapis.com` and the `--dns-redirect` names with the receiver's IP, forwards everything else |
-| SNTP server | `stadiacast.helpers.sntp_server` | binds port 123; answers `time.google.com` with the host clock |
+| DNS sink | `stadiacast.helpers.dns_sink` (wire format: `helpers.dnswire`) | binds port 53 (`--dns-port`) on the address of `--bind`; answers `*.googleapis.com` and the `--dns-redirect` names with the receiver's IP, forwards everything else |
+| SNTP server | `stadiacast.helpers.sntp_server` | binds port 123 on the address of `--bind`; answers `time.google.com` with the host clock |
 
 The helpers are plain blocking servers in their own processes so they keep answering while the
 receiver's event loop is busy, and so the privileged-looking ports are isolated. The receiver

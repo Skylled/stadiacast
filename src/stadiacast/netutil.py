@@ -11,13 +11,17 @@ from urllib.parse import urlsplit
 
 from stadiacast import SERVER_NAME
 
+#: The addresses that mean "every address of this computer" to a listener.
+WILDCARD_ADDRESSES = ("", "0.0.0.0", "::")
 
-def bind_hint(port: int, protocol: str, error: OSError) -> str:
+
+def bind_hint(port: int, protocol: str, error: OSError, address: str = "") -> str:
     """One sentence for the user on a port that could not be bound: who holds it, and what to do.
 
     Windows refuses a port another program holds exclusively with a permission error, and the
     Windows Time service holds UDP 123 that way while it runs; Linux refuses the ports below 1024
-    to anyone but root.
+    to anyone but root; macOS lets anyone have them, but on all addresses only, so ``address``,
+    the one the listener asked for, decides what is said there.
     """
     taken = f"{protocol} port {port} is taken"
     if sys.platform == "win32" and isinstance(error, PermissionError):
@@ -27,6 +31,12 @@ def bind_hint(port: int, protocol: str, error: OSError) -> str:
                 f"administrator PowerShell (it starts again at the next boot) and start the receiver again ({error})"
             )
         return f"{taken} by another program, which holds it exclusively ({error})"
+    if isinstance(error, PermissionError) and sys.platform == "darwin" and address not in WILDCARD_ADDRESSES:
+        return (
+            f"binding {protocol} port {port} on {address} needs root: macOS gives a port below 1024 to a program "
+            f"that is not root on all addresses only, so listen on 0.0.0.0 (--bind 0.0.0.0) or on a port above "
+            f"1023 ({error})"
+        )
     if isinstance(error, PermissionError):
         return f"binding {protocol} port {port} needs root or CAP_NET_BIND_SERVICE ({error})"
     if error.errno == errno.EADDRINUSE:
