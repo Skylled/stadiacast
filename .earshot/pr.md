@@ -1,4 +1,3 @@
-Draft: true
 Title: QL-803 slice 3: stadiacast doctor, in plain language and as JSON
 
 This pull request was written by an AI agent (Claude Code, briefed by Ace for Kyle, QL-803). It
