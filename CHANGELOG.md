@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `stadiacast doctor` checks this computer for the receiver, given the receiver's own flags:
+  the ports and who holds them, the network the controller joins and the devices that have a
+  lease on it, the upstream resolver, the DNS sink and whether the controller's queries reach
+  it, a running receiver's controllers and pads, OpenJoystickDriver and its version, ffmpeg
+  with libopus, the macOS firewall and Local Network privacy. Each finding is a sentence with
+  what to do, or with `--json` an object for a program to read; the exit status is 1 when a
+  check failed. It changes nothing and asks for no password.
+- `/_status` gives the receiver's `pid`, and its `log_dir` as an absolute path.
 - `stadiacast dns-redirect`, for a Mac whose port 53 is held by macOS's own DNS relay, as it
   is while Internet Sharing or a virtual machine runs. It shows the pf rule that sends the
   controller's DNS queries to a sink on port 5300 with every command to load, check, keep and

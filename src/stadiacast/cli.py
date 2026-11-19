@@ -29,6 +29,8 @@ DOCS = "https://github.com/jkfran/stadiacast/blob/main/docs"
 #: The first argument that makes the ``stadiacast`` command show or set up the DNS redirect of a
 #: Mac (:mod:`stadiacast.dnsredirect`) instead of running the receiver.
 DNS_REDIRECT_COMMAND = "dns-redirect"
+#: The first argument that makes it check this computer for the receiver (:mod:`stadiacast.doctor`).
+DOCTOR_COMMAND = "doctor"
 
 
 def _csv(value: str) -> tuple[str, ...]:
@@ -92,6 +94,7 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
             "override it.  The setup guide covers the network and the certificate, the protocol notes what\n"
             f"is behind every knob:\n  {DOCS}/setup.md\n  {DOCS}/protocol.md\n\n"
             "Other commands, each with its own --help:\n"
+            "  stadiacast doctor         check this computer: ports, the controller's network, DNS, the pad driver\n"
             "  stadiacast dns-redirect   macOS: send the controller's DNS to a sink that could not have port 53"
         ),
     )
@@ -644,6 +647,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args[:1] == [HELPER_FLAG]:  # the frozen executable re-launched as one of its helpers
         return run_helper(args[1:])
+    if args[:1] == [DOCTOR_COMMAND]:
+        from stadiacast import doctor
+
+        try:
+            return doctor.main(args[1:])
+        except (OSError, ValueError) as e:  # a file a flag names
+            print(f"stadiacast: {e}", file=sys.stderr)
+            return 2
     if args[:1] == [DNS_REDIRECT_COMMAND]:
         from stadiacast import dnsredirect
 
