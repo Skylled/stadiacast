@@ -22,6 +22,41 @@ and it detects its own address, the one on the interface that routes to the cont
 no default resolver: it runs the DNS sink only with `--dns-upstream`, and the SNTP server only
 with `--sntp`, which `--preset live` turns on.
 
+## When it does not work: `stadiacast doctor`
+
+Give the doctor the flags you give the receiver, while the receiver runs or before it starts:
+
+```sh
+stadiacast doctor --preset live --dns-upstream 192.168.1.1 --gamepad ojd
+stadiacast doctor --json --preset live --dns-upstream 192.168.1.1 --gamepad ojd    # for a program
+```
+
+It changes nothing and asks for no password. One line a check, and under a check that needs it
+a `do:` line with the command or the setting:
+
+| check | what it looks at |
+|---|---|
+| `receiver` | whether a receiver answers `/_status` on a control port of this computer |
+| `network`, `network.bridge` | this computer's address on the controller's network, the interface, and on macOS whether Internet Sharing is switched on and which bridge the hotspot got |
+| `port.<tcp or udp>.<number>` | each port the receiver listens on: free before a start, the receiver's own while it runs, or who else holds it |
+| `devices`, `devices.reach` | macOS: the devices with a lease on the hotspot (`/var/db/dhcpd_leases`), which of them answer now, and whether macOS lets this program send to them (Local Network privacy) |
+| `dns.upstream`, `dns.sink`, `dns.path` | the upstream resolver, the sink's own answer, and what port 53 of this computer answers, which is what the controller gets; with the sink on another port, whether queries from the controller's network have reached it (the sink's log) and, as root, whether the pf rule is loaded |
+| `controller.<label>`, `gamepad.<label>` | a running receiver's controllers with the state of their display link, and a pad that failed |
+| `ojd`, `ojd.running` | `--gamepad ojd`: where OpenJoystickDriver is, its version, whether the app runs |
+| `ffmpeg` | that it is there and has libopus, when the configuration needs it |
+| `firewall` | macOS: whether the firewall is on |
+
+A status is `ok`, `warn`, `fail`, `info` (a fact without a judgement, `note` in the text) or
+`skip` (not looked at, with the reason). The exit status is 0 when nothing failed and 1 when
+something did. `--json` prints one object: `healthy`, `summary` (a count for each status) and
+`checks`, each with `id`, `status`, `summary`, `fix` (the `do:` lines) and `data` (the facts
+behind the sentence: holders, leases, answers).
+
+What only root can see is reported as not seen: the sockets of other users' programs and the
+rules loaded into pf. `sudo` in front of the doctor makes it read the pf anchor itself. What
+macOS shows to nobody is not checked: whether OpenJoystickDriver has Accessibility and Input
+Monitoring, and whether the terminal has the Microphone and Bluetooth permissions.
+
 ## Network
 
 The only hard requirement is that **the controller resolves names through the receiver**.

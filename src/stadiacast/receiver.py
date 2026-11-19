@@ -353,7 +353,8 @@ class Receiver:
             f"redirects its queries,\nthe controller is answered by macOS, reaches Google and never this receiver. "
             f"Redirect them (asks for your password, lasts until the Mac restarts):\n"
             f"    {fix}\n"
-            f"`stadiacast dns-redirect` alone changes nothing: it shows the rule, how to check it and how to keep it."
+            f"`stadiacast dns-redirect` alone changes nothing: it shows the rule, how to check it and how to keep it.\n"
+            f"`stadiacast doctor`, with the flags of this receiver, says whether the controller's queries arrive."
         )
         return port
 
@@ -1125,11 +1126,12 @@ class Receiver:
         """The ``/_status`` document."""
         return {
             "version": __version__,
+            "pid": os.getpid(),
             "controllers": {ctl.label: ctl.status() for ctl in self.controllers.values()},
             "advertise_ip": self.cfg.advertise_ip,
             "helpers": self.helpers_status(),
             "gamepads": self.gamepads.status() if self.gamepads is not None else None,
             "mic_device": self.mic_device.state() if self.mic_device is not None else None,
             "event_counts": self.log.counts,
-            "log_dir": self.cfg.log_dir,
+            "log_dir": os.path.abspath(self.cfg.log_dir) if self.cfg.log_dir else None,
         }

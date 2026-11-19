@@ -62,7 +62,11 @@ connectivity check and `stadiaconfig` when their names are redirected to it, whi
 DNS sink does not do) and hands everything that identifies a controller to that controller's
 session. It is also the registry: `controller_for()` finds or creates the session for a request.
 Its own address towards the controller and the `stadiaconfig` fetch come from `netutil.py`,
-which the helpers share for the message on a port that is taken. `live_state()` is the
+which the helpers share for the message on a port that is taken. `hostnet.py` reads the
+computer's interfaces and a port's holders from the system's tools; the receiver asks it before
+it gives the DNS sink a port, and two commands that are not the receiver are built on it:
+`dnsredirect.py` (`stadiacast dns-redirect`, the pf rule of a Mac whose port 53 is the
+system's) and `doctor.py` (`stadiacast doctor`). `cli.main` hands both their arguments. `live_state()` is the
 `/_input` document, and whatever changes something in it calls `live_changed()`, which wakes
 the `/_events` clients (a `LiveStream` each).
 
@@ -276,6 +280,7 @@ real controller the receiver runs with `--preset live` on ports 53/80/123/443, w
 | an output for the decoded input | consume `Receiver.wait_event()` / `publish_event()` events; `virtual_gamepad.py` is one |
 | a new audio capture | a `CaptureDevice` and `BlockCapture` pair (`capture.py`; `loopback.py` is one), chosen in `Source.device` (`audio.py`) |
 | another way to make the microphone a device | an `Output` (`micdevice.py`), chosen in `open_output` |
+| a new check of `stadiacast doctor` | a `check_*` function in `doctor.py` that returns `Check`s and touches the system through `Env` only, added to `CHECKS`; a test against `tests/test_doctor.py`'s `Mac` |
 | a new helper process | a module under `helpers/` with a `main(argv)`, named in `HELPERS` (`helpers/__init__.py`), started by `Receiver._spawn_helper` |
 | something the user must install or configure | raise `SetupError` (`errors.py`) with a message that says what to install; the command line prints it as one line |
 | a schema change | the `.proto` under `schemas/`, then `python -m stadiacast.schema_compiler` |
