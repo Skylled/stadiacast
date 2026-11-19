@@ -4,6 +4,7 @@ stopped with the receiver is not, and a helper whose port is taken logs who hold
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import os
 import socket
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from stadiacast import netutil
+from stadiacast import hostnet, netutil
 from stadiacast import receiver as receiver_module
 from stadiacast.helpers import DNS_SINK, SNTP_SERVER, helper_command
 from tests.helpers import make_receiver, wait_for
@@ -114,6 +115,130 @@ def test_the_spawned_sink_answers_on_the_address_and_port_it_was_given(tmp_path)
             client.close()
             await rx.stop()
         assert answer[:2] == b"\x12\x34" and answer.endswith(bytes([127, 0, 0, 1]))  # the receiver's address
+
+    asyncio.run(run())
+
+
+def _sleeping_helpers(monkeypatch) -> None:
+    sleeps = _python("import time; time.sleep(60)")
+    monkeypatch.setattr(receiver_module, "helper_command", sleeps)
+
+
+def _probes(monkeypatch, taken: dict[int, list[hostnet.Holder]]) -> None:
+    """Have the receiver find the ports in ``taken`` in use, by the holders given (none: a
+    process of another user, which lsof does not show)."""
+
+    def probe(address: str, port: int, protocol: str) -> hostnet.PortProbe:
+        if port not in taken:
+            return hostnet.PortProbe(port, protocol, address)
+        return hostnet.PortProbe(
+            port, protocol, address, OSError(errno.EADDRINUSE, "Address already in use"), taken[port]
+        )
+
+    monkeypatch.setattr(receiver_module, "probe_port", probe)
+
+
+def test_on_a_mac_whose_port_53_is_the_systems_the_sink_moves_and_says_what_to_run(tmp_path, monkeypatch) -> None:
+    spawned: dict[str, list[str]] = {}
+
+    def record(name: str, args: list[str]) -> list[str]:
+        spawned[name] = list(args)
+        return [sys.executable, "-c", "import time; time.sleep(60)"]
+
+    monkeypatch.setattr(receiver_module, "helper_command", record)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    _probes(monkeypatch, {53: []})
+    fix = "stadiacast dns-redirect --apply --advertise-ip 127.0.0.1 --dns-port 5300"
+
+    async def run() -> None:
+        rx = make_receiver(tmp_path, dns_upstream="192.0.2.1")  # --dns-port auto
+        await rx.start()
+        try:
+            sink = rx.status()["helpers"][DNS_SINK]
+        finally:
+            await rx.stop()
+        dns = spawned[DNS_SINK]
+        assert dns[dns.index("--port") + 1] == "5300"
+        assert sink["listen"] == "127.0.0.1:5300"
+        assert sink["redirect"]["command"] == fix and sink["redirect"]["from_port"] == 53
+        moved = next(r for r in rx.log.records if r["event"] == "dns_sink_moved")
+        assert moved["to_port"] == 5300 and "mDNSResponder" in moved["holder"]
+        assert (
+            len(rx.notices) == 1 and fix in rx.notices[0] and "reaches Google and never this receiver" in rx.notices[0]
+        )
+
+    asyncio.run(run())
+
+
+def test_the_start_prints_the_notice_under_the_ready_line(tmp_path, monkeypatch, capsys) -> None:
+    from stadiacast import cli
+    from tests.test_cli import lab_config
+
+    _sleeping_helpers(monkeypatch)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    _probes(monkeypatch, {53: []})
+
+    async def run() -> str:
+        task = asyncio.get_running_loop().create_task(cli.amain(lab_config(tmp_path, dns_upstream="192.0.2.1")))
+        out = ""
+        for _ in range(500):
+            out += capsys.readouterr().out
+            if "wake the controller(s) now" in out:
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return out
+
+    said = asyncio.run(run())
+    assert "DNS: port 53 of this Mac is held by mDNSResponder, most likely" in said
+    assert "stadiacast dns-redirect --apply --advertise-ip 127.0.0.1 --dns-port 5300" in said
+    assert said.index("ready:") < said.index("DNS: port 53") < said.index("wake the controller(s) now")
+
+
+@pytest.mark.parametrize(
+    ("platform", "dns_port", "holders", "says"),
+    [
+        # a holder this user can see is a leftover to stop, on a Mac too: the sink does not move
+        ("darwin", 0, [hostnet.Holder("python3.14", 4242, "kyle", "*:53")], "held by python3.14 (pid 4242, user kyle)"),
+        ("darwin", 53, [], "held by mDNSResponder, most likely"),  # port 53 was asked for by name
+        ("linux", 0, [], "often systemd-resolved or dnsmasq"),
+    ],
+)
+def test_a_dns_port_that_is_taken_ends_the_start_with_its_holder(
+    tmp_path, monkeypatch, platform, dns_port, holders, says
+) -> None:
+    """The sink used to exit beside a receiver that went on, and the controller was sent to Google."""
+    _sleeping_helpers(monkeypatch)
+    monkeypatch.setattr(sys, "platform", platform)
+    _probes(monkeypatch, {53: holders})
+
+    async def run() -> None:
+        rx = make_receiver(tmp_path, dns_upstream="192.0.2.1", dns_port=dns_port)
+        try:
+            with pytest.raises(OSError, match=r"the DNS sink cannot listen on 127\.0\.0\.1:53 \(udp\)") as refused:
+                await rx.start()
+            assert says in str(refused.value)
+            assert rx._dns_proc is None
+        finally:
+            await rx.stop()
+
+    asyncio.run(run())
+
+
+def test_a_fallback_port_that_is_taken_too_ends_the_start(tmp_path, monkeypatch) -> None:
+    _sleeping_helpers(monkeypatch)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    _probes(monkeypatch, {53: [], 5300: [hostnet.Holder("python3.14", 7, "kyle", "*:5300")]})
+
+    async def run() -> None:
+        rx = make_receiver(tmp_path, dns_upstream="192.0.2.1")
+        try:
+            with pytest.raises(OSError, match=r"cannot listen on 127\.0\.0\.1:5300 .*held by python3\.14 \(pid 7"):
+                await rx.start()
+        finally:
+            await rx.stop()
 
     asyncio.run(run())
 

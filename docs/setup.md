@@ -37,7 +37,8 @@ like any other, so the controller still makes those two requests to Google at bo
 Options, from simplest to most involved:
 
 - **Hotspot hosted by the receiver's machine** (the reference rig). The machine is the
-  controller's DNS server automatically.
+  controller's DNS server automatically. On a Mac that also runs virtual machines, see
+  [when port 53 is not free](#macos-when-port-53-is-not-free).
 - **Your existing Wi-Fi.** Make the router's DHCP hand out the receiver's IP as the DNS
   server to the controller alone (a static lease or a per-client DNS option). Not to the whole
   LAN: the sink answers every device alike, so the others would get `*.googleapis.com` and
@@ -66,11 +67,52 @@ Caveat: when a redirected name gets NXDOMAIN the firmware falls back to `8.8.8.8
 the real host through the NAT, which is why `--clearcut-block tls` (fail the TLS handshake)
 is preferred over `--clearcut-block dns` (see [protocol.md](protocol.md#7-clearcut-and-the-power-off)).
 
+### macOS: when port 53 is not free
+
+macOS runs a DNS relay of its own, inside mDNSResponder, for Internet Sharing and for virtual
+machines (Tart, UTM, Docker and anything else on Apple's virtual network). While one of them is
+in use it holds port 53 on every address, a normal user's program cannot take the port beside
+it, and macOS gives nobody but root a port below 1024 on one address. The sink then has no
+port 53 to listen on, and a controller that asks port 53 is answered by macOS with Google's
+real addresses.
+
+The receiver tries the port before it starts the sink:
+
+- With `--dns-port auto` (the default) on a Mac whose port 53 a system service holds, the sink
+  listens on 5300 instead. The start says so under its ready line, the log has a
+  `dns_sink_moved` record, and `/_status` carries the command under
+  `helpers.dns_sink.redirect`.
+- In every other case a port that is taken ends the start with exit status 2 and the holder,
+  for example a sink left over from an earlier run.
+
+A sink on 5300 needs the Mac to redirect the controller's queries to it, with a rule in pf,
+the packet filter of macOS. Loading one takes root, so the receiver never does it:
+
+```sh
+stadiacast dns-redirect            # shows the rule and every command; changes nothing
+stadiacast dns-redirect --apply    # loads it through sudo, each command shown first
+stadiacast dns-redirect --status   # is it loaded, and is pf on (sudo)
+stadiacast dns-redirect --remove   # empties the anchor (sudo)
+stadiacast dns-redirect --launchd  # prints a launchd job that loads it at every start of the Mac
+```
+
+The rule is `rdr pass inet proto { udp, tcp } from <the hotspot's network> to any port 53 ->
+<the Mac's address there> port 5300`, in the anchor `com.apple/250.stadiacast`, which the
+stock `/etc/pf.conf` already evaluates. It matches by the network's addresses and not by
+interface: the hotspot is `bridge100` on a Mac with nothing else bridged, and `bridge101` or
+later on one that runs a virtual machine, where a rule on `bridge100` matches nothing. It
+catches every server the controller asks, its fallback `8.8.8.8` included. A rule loaded by
+hand is gone after a restart of the Mac, and a change of Internet Sharing may reload pf
+without it: load it again, or install the launchd job.
+
+Start the hotspot before `dns-redirect`, so that it finds the network; with the hotspot off,
+name the Mac's address on it with `--advertise-ip`.
+
 Ports used by the receiver:
 
 | port | protocol | purpose |
 |---|---|---|
-| 53 TCP/UDP | DNS | the DNS sink (`--dns-upstream` spawns it; `--dns-port` moves it) |
+| 53 TCP/UDP | DNS | the DNS sink (`--dns-upstream` spawns it; `--dns-port` moves it, and on a Mac whose port 53 is the system's it moves to 5300 by itself) |
 | 123 UDP | SNTP | time for the controller (`--sntp`, on in the `live` preset) |
 | 443 TCP | HTTPS | the Google endpoints the DNS sink redirects |
 | 80, 8008 TCP | HTTP | the local control endpoints `/_status`, `/_input`, `/_events`, `/_rumble`, `/_start_game`, `/_audio`, `/_mic`, `/_shutdown` |
@@ -81,7 +123,8 @@ Ports used by the receiver:
 On Linux, binding the ports below 1024 needs root, or `CAP_NET_BIND_SERVICE` granted to the
 interpreter binary (`setcap cap_net_bind_service=+ep` on the file `.venv/bin/python3` links to).
 Port 53 is often held already, by systemd-resolved or dnsmasq (NetworkManager runs one for a
-hotspot it shares): the DNS sink then exits, and its `helper_exited` record says so.
+hotspot it shares): the receiver then ends its start and names the port and, where it can see it,
+the program that holds it.
 
 On Windows, the Windows Time service holds UDP 123 while it runs, and the SNTP server cannot
 start until it is stopped: `Stop-Service w32time` in an administrator PowerShell (Windows

@@ -7,10 +7,22 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `stadiacast dns-redirect`, for a Mac whose port 53 is held by macOS's own DNS relay, as it
+  is while Internet Sharing or a virtual machine runs. It shows the pf rule that sends the
+  controller's DNS queries to a sink on port 5300 with every command to load, check, keep and
+  remove it, and changes nothing unless `--apply` or `--remove` is given, which run through
+  `sudo` and show each command first.
 - `--dns-port` sets the port the DNS sink of `--dns-upstream` listens on, for a computer whose
   port 53 belongs to another program and whose firewall can send the controller's queries on.
 - `/_status` lists the helper processes under `helpers`: where each listens and whether it
   still runs.
+
+### Changed
+- The receiver tries the DNS sink's port before it starts the sink. `--dns-port` defaults to
+  `auto`: port 53, or on a Mac whose port 53 a system service holds, 5300, with the redirect
+  to run said under the ready line, in a `dns_sink_moved` record and in `/_status`. A port
+  that is taken otherwise ends the start with exit status 2 and the program that holds it.
+  The sink used to exit beside a receiver that went on, and the controller was sent to Google.
 
 ### Fixed
 - The DNS sink and the SNTP server listen on the address of `--bind`. They listened on every

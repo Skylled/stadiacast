@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import errno
 import html
 import json
 import os
@@ -34,8 +35,10 @@ from stadiacast.audio import ffmpeg_path, source_from_spec
 from stadiacast.certs import ensure_certificate, resolve_clock_pin
 from stadiacast.config import CLEARCUT_HOSTS, Config
 from stadiacast.controller import ControllerSession
+from stadiacast.dnsredirect import FALLBACK_DNS_PORT
 from stadiacast.errors import SetupError
 from stadiacast.helpers import DNS_SINK, SNTP_SERVER, helper_command
+from stadiacast.hostnet import describe_holders, probe_port
 from stadiacast.http_server import HttpRequest, HttpResponse, HttpServer
 from stadiacast.log import EventLog
 from stadiacast.micdevice import MicrophoneDevice, open_output
@@ -139,6 +142,13 @@ class Receiver:
         self._dns_proc: asyncio.subprocess.Process | None = None
         self._sntp_proc: asyncio.subprocess.Process | None = None
         self._helper_watchers: list[asyncio.Task[None]] = []
+        self.dns_port = cfg.dns_port or 53  # where the DNS sink listens, once it is started
+        #: Set when the sink is not on port 53 by the receiver's own choice: what holds 53, and the
+        #: command that redirects the controller's queries. Shown in ``/_status``.
+        self.dns_redirect: dict[str, Any] | None = None
+        #: What the start has to tell whoever reads the terminal, beyond the log: each is printed
+        #: under the ready line.
+        self.notices: list[str] = []
         self.event_streams: set[LiveStream] = set()  # the /_events clients
         #: Set by ``POST /_shutdown``; whoever runs the receiver waits for it, as for Ctrl-C.
         self.stop_requested = asyncio.Event()
@@ -301,12 +311,59 @@ class Receiver:
         code = await proc.wait()
         self.log("helper_exited", helper=name, pid=proc.pid, returncode=code, output=_tail(out_path))
 
+    def _choose_dns_port(self) -> int:
+        """The port the DNS sink gets, tried before the sink is started: a sink that cannot bind
+        would exit beside a receiver that goes on, and the controller would be sent to Google.
+
+        A port that is taken ends the start with who holds it. The one exception is the Mac whose
+        port 53 a system service holds (mDNSResponder, for Internet Sharing and for virtual
+        machines) with ``--dns-port auto``: nothing short of root gets that port, so the sink
+        moves to :data:`FALLBACK_DNS_PORT` and the start says what redirects the controller there.
+        """
+        wanted = self.cfg.dns_port or 53
+        for protocol in ("udp", "tcp"):
+            probe = probe_port(self.cfg.bind, wanted, protocol)
+            if probe.free:
+                continue
+            assert probe.error is not None
+            system_holds_it = probe.error.errno == errno.EADDRINUSE and not probe.holders
+            if self.cfg.dns_port == 0 and sys.platform == "darwin" and system_holds_it:
+                return self._move_dns_port(describe_holders(probe))
+            hint = bind_hint(wanted, "DNS", probe.error, self.cfg.bind)
+            held = f": held by {describe_holders(probe)}" if probe.error.errno == errno.EADDRINUSE else ""
+            raise OSError(f"the DNS sink cannot listen on {self.cfg.bind}:{wanted} ({protocol}): {hint}{held}")
+        return wanted
+
+    def _move_dns_port(self, holder: str) -> int:
+        port = FALLBACK_DNS_PORT
+        for protocol in ("udp", "tcp"):
+            probe = probe_port(self.cfg.bind, port, protocol)
+            if probe.error is not None:
+                raise OSError(
+                    f"the DNS sink cannot listen on {self.cfg.bind}:{port} ({protocol}), where it goes when port 53 "
+                    f"is a system service's: {bind_hint(port, 'DNS', probe.error, self.cfg.bind)}: held by "
+                    f"{describe_holders(probe)}"
+                )
+        fix = f"stadiacast dns-redirect --apply --advertise-ip {self.cfg.advertise_ip} --dns-port {port}"
+        self.dns_redirect = {"from_port": 53, "to_port": port, "holder": holder, "command": fix}
+        self.log("dns_sink_moved", **self.dns_redirect)
+        self.notices.append(
+            f"DNS: port 53 of this Mac is held by {holder}.\n"
+            f"The DNS sink listens on port {port} instead, and the controller asks port 53: until this Mac "
+            f"redirects its queries,\nthe controller is answered by macOS, reaches Google and never this receiver. "
+            f"Redirect them (asks for your password, lasts until the Mac restarts):\n"
+            f"    {fix}\n"
+            f"`stadiacast dns-redirect` alone changes nothing: it shows the rule, how to check it and how to keep it."
+        )
+        return port
+
     async def _start_dns(self) -> None:
         assert self.cfg.log_dir is not None and self.cfg.dns_upstream is not None and self.cfg.advertise_ip is not None
         patterns = ["*.googleapis.com", "googleapis.com", *self.cfg.dns_redirect]
-        listen = f"{self.cfg.bind}:{self.cfg.dns_port}"
+        self.dns_port = self._choose_dns_port()
+        listen = f"{self.cfg.bind}:{self.dns_port}"
         args = [
-            "--listen", self.cfg.bind, "--port", str(self.cfg.dns_port),
+            "--listen", self.cfg.bind, "--port", str(self.dns_port),
             "--upstream", self.cfg.dns_upstream, "--redirect-ip", self.cfg.advertise_ip,
             "--controller-ip", self.cfg.controller_ip, "--log", os.path.join(self.cfg.log_dir, "dns.jsonl"),
         ]  # fmt: skip
@@ -1050,7 +1107,7 @@ class Receiver:
         runs. A helper that is not asked for is absent; one that exited keeps its exit status."""
         helpers: dict[str, Any] = {}
         for name, proc, port in (
-            (DNS_SINK, self._dns_proc, self.cfg.dns_port),
+            (DNS_SINK, self._dns_proc, self.dns_port),
             (SNTP_SERVER, self._sntp_proc, 123),
         ):
             if proc is not None:
@@ -1060,6 +1117,8 @@ class Receiver:
                     "running": proc.returncode is None,
                     "returncode": proc.returncode,
                 }
+        if DNS_SINK in helpers and self.dns_redirect is not None:
+            helpers[DNS_SINK]["redirect"] = self.dns_redirect
         return helpers
 
     def status(self) -> dict[str, Any]:
